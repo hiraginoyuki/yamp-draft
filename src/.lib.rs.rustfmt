@@ -1,0 +1,93 @@
+pub mod util;
+
+use crate::util::ByteRead;
+use crate::util::Timer;
+use mc_varint::VarIntRead;
+use std::error::Error;
+use std::io::BufReader;
+use std::io::Cursor;
+use std::io::Read;
+use std::net::SocketAddr;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::time::Instant;
+
+#[derive(Debug)]
+pub struct Args {
+    pub bind_address: SocketAddr,
+}
+
+impl Args {
+    pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, Box<dyn Error>> {
+        args.next(); // skip argv[0] (binary path)
+
+        let bind_address = args.next().ok_or("missing bind address")?;
+        let bind_address = bind_address.parse()?;
+
+        Ok(Args { bind_address })
+    }
+}
+
+pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    let listener = TcpListener::bind(args.bind_address)?;
+
+    eprintln!("Listening... (bound to {})", args.bind_address);
+
+    let mut time = Instant::now();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        eprintln!(
+            "\n[+{:.6}] {:?}",
+            time.get_elapsed_then_reset().as_secs_f32(),
+            stream
+        );
+        if let Err(e) = handle_connection(stream) {
+            eprintln!("Error while handling connection: {}", e);
+        }
+        eprintln!("[+{:.6}] ;", time.get_elapsed_then_reset().as_secs_f32());
+    }
+
+    Ok(())
+}
+
+fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut x = [0u8];
+    // TODO: there must be other way around than .peek() ; maybe .bytes()
+    stream
+        .peek(&mut x)
+        .map_err(|e| format!("peek() failed: {e}"))?;
+
+    if x[0] == 0xFE {
+        println!("Kind?: Legacy Handshake");
+
+        let mut buf = Vec::with_capacity(256);
+        stream
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read_to_end() failed: {e}"))?;
+
+        eprintln!("len={}, {:?}", buf.len(), buf);
+        let mut cur = Cursor::new(buf);
+        println!("{:X}", cur.read_byte().unwrap());
+        println!("{:X}", cur.read_byte().unwrap());
+    } else {
+        loop {
+            println!("Kind?: Modern Packet");
+
+            let mut stream = BufReader::new(stream.try_clone()?);
+
+            let packet_length: usize = i32::from(stream.read_var_int()?).try_into().unwrap();
+            let packet_id: i32 = stream.read_var_int()?.into();
+            let protocol_version: i32 = stream.read_var_int()?.into();
+            let hostname = stream.read_bytes(255)?;
+            let hostname = String::from_utf8_lossy(&hostname);
+            let a = stream.read_u16();
+
+            println!("len={packet_length}, id={packet_id}, protver={protocol_version}, hostname={hostname}");
+            eprintln!("len={}, {:?}", stream.buffer().len(), stream);
+        }
+    }
+
+    Ok(())
+}

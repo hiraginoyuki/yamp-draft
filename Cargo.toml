@@ -1,0 +1,10 @@
+[package]
+name = "yamp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+byteorder = "1"
+mc-varint = "0.1"
+tokio = { version = "1", features = ["net", "macros", "rt-multi-thread", "io-util"] }
